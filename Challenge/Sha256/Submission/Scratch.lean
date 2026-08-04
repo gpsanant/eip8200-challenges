@@ -22,17 +22,25 @@ def instructions : List Instr :=
   , .push 0 0
   , .push 0 0
   , .op .CALLDATACOPY
-  , .push 1 32
+  , .op .CODESIZE
   , .push 0 0
   , .op .CALLDATASIZE
   , .push 0 0
   , .push 1 2
   , .push 8 (UInt256.ofNat maxShaGas)
   , .op .STATICCALL
-  , .op .POP
-  , .push 1 32
+  , .op .CODESIZE
   , .push 0 0
   , .op .RETURN
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
+  , .op .STOP
   ]
 
 theorem assemble_instructions : assemble instructions = bytecode := by
@@ -48,23 +56,54 @@ def artifact : Challenge.EvmProof.ProgramArtifact where
 @[simp] theorem pc2 : artifact.instructionPC 2 = 2 := by decide
 @[simp] theorem pc3 : artifact.instructionPC 3 = 3 := by decide
 @[simp] theorem pc4 : artifact.instructionPC 4 = 4 := by decide
-@[simp] theorem pc5 : artifact.instructionPC 5 = 6 := by decide
-@[simp] theorem pc6 : artifact.instructionPC 6 = 7 := by decide
-@[simp] theorem pc7 : artifact.instructionPC 7 = 8 := by decide
-@[simp] theorem pc8 : artifact.instructionPC 8 = 9 := by decide
-@[simp] theorem pc9 : artifact.instructionPC 9 = 11 := by decide
-@[simp] theorem pc10 : artifact.instructionPC 10 = 20 := by decide
-@[simp] theorem pc11 : artifact.instructionPC 11 = 21 := by decide
-@[simp] theorem pc12 : artifact.instructionPC 12 = 22 := by decide
-@[simp] theorem pc13 : artifact.instructionPC 13 = 24 := by decide
-@[simp] theorem pc14 : artifact.instructionPC 14 = 25 := by decide
+@[simp] theorem pc5 : artifact.instructionPC 5 = 5 := by decide
+@[simp] theorem pc6 : artifact.instructionPC 6 = 6 := by decide
+@[simp] theorem pc7 : artifact.instructionPC 7 = 7 := by decide
+@[simp] theorem pc8 : artifact.instructionPC 8 = 8 := by decide
+@[simp] theorem pc9 : artifact.instructionPC 9 = 10 := by decide
+@[simp] theorem pc10 : artifact.instructionPC 10 = 19 := by decide
+@[simp] theorem pc11 : artifact.instructionPC 11 = 20 := by decide
+@[simp] theorem pc12 : artifact.instructionPC 12 = 21 := by decide
+@[simp] theorem pc13 : artifact.instructionPC 13 = 22 := by decide
+
+theorem bytecode_size : bytecode.size = 32 := by decide
+
+def codesizeOut (s : State) : State :=
+  { s with
+      stack := UInt256.ofNat s.executionEnv.code.size :: s.stack
+      pc := s.pc.succ }
+
+theorem withGas_decodedOp (s : State) (gas : Nat) :
+    (Challenge.EvmProof.withGas s gas).decodedOp = s.decodedOp := by
+  cases s
+  rfl
+
+def gasSteps_codesize {s : State}
+    (hdecode : s.decodedOp = some .CODESIZE)
+    (hrun : s.halt = .Running)
+    (hnp : Precompile.isPrecompile s.executionEnv.fork
+      s.executionEnv.codeAddr = false)
+    (hcap : s.stack.length < 1024) :
+    Challenge.EvmProof.GasSteps s (codesizeOut s) := by
+  let cost := Gas.baseCost s.fork .CODESIZE
+  apply Challenge.EvmProof.GasStep.of_running cost hrun hnp
+  intro gas hgas
+  have hdecodeGas :
+      (Challenge.EvmProof.withGas s gas).decodedOp = some .CODESIZE := by
+    rw [withGas_decodedOp]
+    exact hdecode
+  simpa [codesizeOut, Challenge.EvmProof.withGas, cost] using
+    StepRunning.codesize (Challenge.EvmProof.withGas s gas)
+      hdecodeGas
+      (by simpa [cost, Challenge.EvmProof.withGas] using hgas)
+      (by simpa [Challenge.EvmProof.withGas] using hcap)
 
 def initial0 (input : ByteArray) : State :=
   Challenge.Sha256.initialState bytecode input 0
 
 def preCall (input : ByteArray) : State :=
   { initial0 input with
-    pc := UInt256.ofNat 20
+    pc := UInt256.ofNat 19
     stack :=
       [ UInt256.ofNat maxShaGas
       , UInt256.ofNat 2
@@ -76,23 +115,36 @@ def preCall (input : ByteArray) : State :=
     activeWords := (initial0 input).activeWordsAfterUInt256 0 input.size
     memory := MachineState.writeBytes (initial0 input).memory input 0 }
 
-def prefixPath : List
+def afterCopy (input : ByteArray) : State :=
+  { initial0 input with
+      pc := UInt256.ofNat 4
+      activeWords := (initial0 input).activeWordsAfterUInt256 0 input.size
+      memory := MachineState.writeBytes (initial0 input).memory input 0 }
+
+def afterCodeSize (input : ByteArray) : State :=
+  codesizeOut (afterCopy input)
+
+def prefixHeadPath : List
     (Challenge.EvmProof.Stepper.Located artifact .Osaka) :=
   [ ⟨0, .op .CALLDATASIZE, by rfl, ⟨by decide, trivial, by rfl⟩⟩
   , ⟨1, .push 0 0, by rfl, by decide⟩
   , ⟨2, .push 0 0, by rfl, by decide⟩
   , ⟨3, .op .CALLDATACOPY, by rfl, ⟨by decide, trivial, by rfl⟩⟩
-  , ⟨4, .push 1 32, by rfl, by decide⟩
-  , ⟨5, .push 0 0, by rfl, by decide⟩
+  ]
+
+def prefixTailPath : List
+    (Challenge.EvmProof.Stepper.Located artifact .Osaka) :=
+  [ ⟨5, .push 0 0, by rfl, by decide⟩
   , ⟨6, .op .CALLDATASIZE, by rfl, ⟨by decide, trivial, by rfl⟩⟩
   , ⟨7, .push 0 0, by rfl, by decide⟩
   , ⟨8, .push 1 2, by rfl, by decide⟩
   , ⟨9, .push 8 (UInt256.ofNat maxShaGas), by rfl, by decide⟩
   ]
 
-theorem prefix_ok (input : ByteArray) (hfit : Challenge.Sha256.CalldataFits input) :
-    Challenge.EvmProof.Stepper.runLocatedBlock prefixPath (initial0 input) =
-      some (preCall input) := by
+theorem prefixHead_ok (input : ByteArray)
+    (hfit : Challenge.Sha256.CalldataFits input) :
+    Challenge.EvmProof.Stepper.runLocatedBlock prefixHeadPath (initial0 input) =
+      some (afterCopy input) := by
   have hsize : input.size < 2 ^ 256 :=
     Nat.lt_trans hfit (by norm_num)
   have hsizeWord : (UInt256.ofNat input.size).toNat = input.size := by
@@ -103,31 +155,76 @@ theorem prefix_ok (input : ByteArray) (hfit : Challenge.Sha256.CalldataFits inpu
   have hs1 : (UInt256.ofNat 1).succ = UInt256.ofNat 2 := by decide
   have hs2 : (UInt256.ofNat 2).succ = UInt256.ofNat 3 := by decide
   have hs3 : (UInt256.ofNat 3).succ = UInt256.ofNat 4 := by decide
-  have hs6 : (UInt256.ofNat 6).succ = UInt256.ofNat 7 := by decide
-  have hs7 : (UInt256.ofNat 7).succ = UInt256.ofNat 8 := by decide
-  have hs8 : (UInt256.ofNat 8).succ = UInt256.ofNat 9 := by decide
-  have ha4 : UInt256.ofNat 4 + UInt256.ofNat 2 = UInt256.ofNat 6 := by decide
-  have ha9 : UInt256.ofNat 9 + UInt256.ofNat 2 = UInt256.ofNat 11 := by decide
-  have ha11 : UInt256.ofNat 11 + UInt256.ofNat 9 = UInt256.ofNat 20 := by decide
-  have htwo : (2 : UInt256) = UInt256.ofNat 2 := by decide
-  have hthirtytwo : (32 : UInt256) = UInt256.ofNat 32 := by decide
   simp [Challenge.EvmProof.Stepper.runLocatedBlock,
     Challenge.EvmProof.Stepper.runLocated,
     Challenge.EvmProof.Stepper.runInstr,
-    prefixPath, preCall, initial0,
+    prefixHeadPath, afterCopy, initial0,
     Challenge.Sha256.initialState, State.activeWordsAfterUInt256,
     Challenge.EvmProof.Memory.readPadded_zero_size,
-    hsizeWord, hzero, hzeroNat, hs0, hs1, hs2, hs3, hs6, hs7, hs8,
-    ha4, ha9, ha11, htwo, hthirtytwo]
+    hsizeWord, hzero, hzeroNat, hs0, hs1, hs2, hs3]
+
+def prefixHeadTrace (input : ByteArray)
+    (hfit : Challenge.Sha256.CalldataFits input) :
+    Challenge.EvmProof.GasSteps (initial0 input) (afterCopy input) := by
+  apply Challenge.EvmProof.Stepper.runLocatedBlock_sound
+    artifact .Osaka prefixHeadPath
+  · rfl
+  · rfl
+  · exact prefixHead_ok input hfit
+  · rfl
+  · rfl
+
+theorem afterCopy_decodes_codesize (input : ByteArray) :
+    (afterCopy input).decodedOp = some .CODESIZE := by
+  apply Challenge.EvmProof.Stepper.decodes_of_artifact
+    artifact (afterCopy input) 4 (.op .CODESIZE)
+  · rfl
+  · norm_num [afterCopy, Challenge.EvmProof.Word.word_toNat_ofNat]
+  · rfl
+  · exact ⟨by decide, trivial, by rfl⟩
+
+def prefixCodeSizeTrace (input : ByteArray) :
+    Challenge.EvmProof.GasSteps (afterCopy input) (afterCodeSize input) := by
+  exact gasSteps_codesize (afterCopy_decodes_codesize input) (by rfl)
+    (by
+      change Precompile.isPrecompile .Osaka
+        Challenge.Sha256.deployAddress = false
+      exact Challenge.Sha256.deployAddress_not_precompile)
+    (by change 0 < 1024; decide)
+
+theorem prefixTail_ok (input : ByteArray) :
+    Challenge.EvmProof.Stepper.runLocatedBlock prefixTailPath
+      (afterCodeSize input) = some (preCall input) := by
+  have hzero : (⟨0⟩ : UInt256) = UInt256.ofNat 0 := by decide
+  have hs4 : (UInt256.ofNat 4).succ = UInt256.ofNat 5 := by decide
+  have hs5 : (UInt256.ofNat 5).succ = UInt256.ofNat 6 := by decide
+  have hs6 : (UInt256.ofNat 6).succ = UInt256.ofNat 7 := by decide
+  have hs7 : (UInt256.ofNat 7).succ = UInt256.ofNat 8 := by decide
+  have ha8 : UInt256.ofNat 8 + UInt256.ofNat 2 = UInt256.ofNat 10 := by decide
+  have ha10 : UInt256.ofNat 10 + UInt256.ofNat 9 = UInt256.ofNat 19 := by decide
+  have htwo : (2 : UInt256) = UInt256.ofNat 2 := by decide
+  simp [Challenge.EvmProof.Stepper.runLocatedBlock,
+    Challenge.EvmProof.Stepper.runLocated,
+    Challenge.EvmProof.Stepper.runInstr,
+    prefixTailPath, afterCodeSize, afterCopy, preCall, initial0,
+    Challenge.Sha256.initialState,
+    codesizeOut, bytecode_size,
+    hzero, hs4, hs5, hs6, hs7, ha8, ha10, htwo]
+
+def prefixTailTrace (input : ByteArray) :
+    Challenge.EvmProof.GasSteps (afterCodeSize input) (preCall input) := by
+  apply Challenge.EvmProof.Stepper.runLocatedBlock_sound
+    artifact .Osaka prefixTailPath
+  · rfl
+  · rfl
+  · exact prefixTail_ok input
+  · rfl
+  · rfl
 
 def prefixTrace (input : ByteArray) (hfit : Challenge.Sha256.CalldataFits input) :
-    Challenge.EvmProof.GasSteps (initial0 input) (preCall input) := by
-  apply Challenge.EvmProof.Stepper.runLocatedBlock_sound artifact .Osaka prefixPath
-  · rfl
-  · rfl
-  · exact prefix_ok input hfit
-  · rfl
-  · rfl
+    Challenge.EvmProof.GasSteps (initial0 input) (preCall input) :=
+  (prefixHeadTrace input hfit).trans
+    ((prefixCodeSizeTrace input).trans (prefixTailTrace input))
 
 theorem sha256Gas_le_max (input : ByteArray)
     (hfit : Challenge.Sha256.CalldataFits input) :
@@ -326,7 +423,7 @@ theorem resumed_eq_suffixStart (input : ByteArray) (gas : Nat) :
   rfl
 
 @[simp] theorem suffixStart_pc (input : ByteArray) (gas : Nat) :
-    (suffixStart input gas).pc = UInt256.ofNat 21 := by rfl
+    (suffixStart input gas).pc = UInt256.ofNat 20 := by rfl
 
 @[simp] theorem suffixStart_stack (input : ByteArray) (gas : Nat) :
     (suffixStart input gas).stack = [UInt256.ofNat 1] := by rfl
@@ -353,49 +450,67 @@ theorem resumed_eq_suffixStart (input : ByteArray) (gas : Nat) :
         (maxShaGas - Precompile.sha256Gas input) := by
   rfl
 
-def suffixPath : List
+def suffixTailPath : List
     (Challenge.EvmProof.Stepper.Located artifact .Osaka) :=
-  [ ⟨11, .op .POP, by rfl, ⟨by decide, trivial, by rfl⟩⟩
-  , ⟨12, .push 1 32, by rfl, by decide⟩
-  , ⟨13, .push 0 0, by rfl, by decide⟩
-  , ⟨14, .op .RETURN, by rfl, ⟨by decide, trivial, by rfl⟩⟩
+  [ ⟨12, .push 0 0, by rfl, by decide⟩
+  , ⟨13, .op .RETURN, by rfl, ⟨by decide, trivial, by rfl⟩⟩
   ]
 
 def suffixFinal (input : ByteArray) (gas : Nat) : State :=
   { suffixStart input gas with
-      pc := UInt256.ofNat 25
-      stack := []
+      pc := UInt256.ofNat 22
+      stack := [UInt256.ofNat 1]
       halt := .Returned
       hReturn := MachineState.readPadded (suffixStart input gas).memory 0 32
       activeWords := (suffixStart input gas).activeWordsAfterUInt256 0 32 }
 
-theorem suffix_ok (input : ByteArray) (gas : Nat) :
-    Challenge.EvmProof.Stepper.runLocatedBlock suffixPath
-      (suffixStart input gas) = some (suffixFinal input gas) := by
+theorem suffixStart_decodes_codesize (input : ByteArray) (gas : Nat) :
+    (suffixStart input gas).decodedOp = some .CODESIZE := by
+  apply Challenge.EvmProof.Stepper.decodes_of_artifact
+    artifact (suffixStart input gas) 11 (.op .CODESIZE)
+  · exact suffixStart_code input gas
+  · norm_num [suffixStart_pc, Challenge.EvmProof.Word.word_toNat_ofNat]
+  · rfl
+  · exact ⟨by decide, trivial, by rfl⟩
+
+def suffixCodeSizeTrace (input : ByteArray) (gas : Nat) :
+    Challenge.EvmProof.GasSteps (suffixStart input gas)
+      (codesizeOut (suffixStart input gas)) :=
+  gasSteps_codesize (suffixStart_decodes_codesize input gas)
+    (suffixStart_halt input gas)
+    (by simpa [suffixStart_fork, suffixStart_codeAddr] using
+      Challenge.Sha256.deployAddress_not_precompile)
+    (by simp [suffixStart_stack])
+
+theorem suffixTail_ok (input : ByteArray) (gas : Nat) :
+    Challenge.EvmProof.Stepper.runLocatedBlock suffixTailPath
+      (codesizeOut (suffixStart input gas)) = some (suffixFinal input gas) := by
   have hzeroNat : (⟨0⟩ : UInt256).toNat = 0 := by decide
-  have hthirtytwoNat : (32 : UInt256).toNat = 32 := by decide
+  have hs20 : (UInt256.ofNat 20).succ = UInt256.ofNat 21 := by decide
   have hs21 : (UInt256.ofNat 21).succ = UInt256.ofNat 22 := by decide
-  have ha22 : UInt256.ofNat 22 + UInt256.ofNat 2 =
-      UInt256.ofNat 24 := by decide
-  have hs24 : (UInt256.ofNat 24).succ = UInt256.ofNat 25 := by decide
   simp [Challenge.EvmProof.Stepper.runLocatedBlock,
     Challenge.EvmProof.Stepper.runLocated,
     Challenge.EvmProof.Stepper.runInstr,
-    suffixPath, suffixFinal, State.activeWordsAfterUInt256,
-    hzeroNat, hthirtytwoNat,
-    hs21, ha22, hs24]
+    suffixTailPath, suffixFinal, codesizeOut, bytecode_size,
+    State.activeWordsAfterUInt256,
+    hzeroNat, hs20, hs21]
+
+def suffixTailTrace (input : ByteArray) (gas : Nat) :
+    Challenge.EvmProof.GasSteps (codesizeOut (suffixStart input gas))
+      (suffixFinal input gas) := by
+  apply Challenge.EvmProof.Stepper.runLocatedBlock_sound
+    artifact .Osaka suffixTailPath
+  · exact suffixStart_code input gas
+  · exact suffixStart_fork input gas
+  · exact suffixTail_ok input gas
+  · simp [codesizeOut, suffixStart_halt]
+  · simpa [codesizeOut, suffixStart_fork, suffixStart_codeAddr] using
+      Challenge.Sha256.deployAddress_not_precompile
 
 def suffixTrace (input : ByteArray) (gas : Nat) :
     Challenge.EvmProof.GasSteps (suffixStart input gas)
-      (suffixFinal input gas) := by
-  apply Challenge.EvmProof.Stepper.runLocatedBlock_sound
-    artifact .Osaka suffixPath
-  · exact suffixStart_code input gas
-  · exact suffixStart_fork input gas
-  · exact suffix_ok input gas
-  · exact suffixStart_halt input gas
-  · simpa [suffixStart_fork, suffixStart_codeAddr] using
-      Challenge.Sha256.deployAddress_not_precompile
+      (suffixFinal input gas) :=
+  (suffixCodeSizeTrace input gas).trans (suffixTailTrace input gas)
 
 theorem uint256_ofNat_toNat (w : UInt256) : UInt256.ofNat w.toNat = w := by
   cases w
@@ -457,31 +572,36 @@ theorem suffixFinal_activeWords (input : ByteArray) (gas : Nat) :
     exact suffixStart_one_le_activeWords input gas]
   exact uint256_ofNat_toNat _
 
-theorem suffixTrace_cost (input : ByteArray) (gas : Nat) :
-    (suffixTrace input gas).cost = 7 := by
+theorem suffixCodeSizeTrace_cost (input : ByteArray) (gas : Nat) :
+    (suffixCodeSizeTrace input gas).cost = 2 := by
+  rfl
+
+theorem suffixTailTrace_cost (input : ByteArray) (gas : Nat) :
+    (suffixTailTrace input gas).cost = 2 := by
   have hwords : (suffixFinal input gas).activeWords =
-      (suffixStart input gas).activeWords := suffixFinal_activeWords input gas
+      (codesizeOut (suffixStart input gas)).activeWords := by
+    simpa [codesizeOut] using suffixFinal_activeWords input gas
   have hcost := Challenge.EvmProof.Meter.runLocatedBlock_cost_static_potential
-    suffixPath (suffix_ok input gas) (suffixStart_fork input gas) (by
+    suffixTailPath (suffixTail_ok input gas) (suffixStart_fork input gas) (by
       intro located hmem q hfork
-      simp only [suffixPath, List.mem_cons, List.not_mem_nil,
+      simp only [suffixTailPath, List.mem_cons, List.not_mem_nil,
         or_false] at hmem
-      rcases hmem with h | h | h | h
-      · subst located
-        rfl
-      · subst located
-        rfl
+      rcases hmem with h | h
       · subst located
         rfl
       · subst located
         rfl)
   rw [hwords] at hcost
   norm_num [Challenge.EvmProof.Meter.runLocatedBlockStaticCost,
-    suffixPath, Challenge.EvmProof.Meter.instrStaticCost,
+    suffixTailPath, Challenge.EvmProof.Meter.instrStaticCost,
     Gas.baseCost] at hcost
-  unfold suffixTrace
-  unfold suffixPath
+  unfold suffixTailTrace
+  unfold suffixTailPath
   exact hcost
+
+theorem suffixTrace_cost (input : ByteArray) (gas : Nat) :
+    (suffixTrace input gas).cost = 4 := by
+  simp [suffixTrace, suffixCodeSizeTrace_cost, suffixTailTrace_cost]
 
 theorem suffix_affordable (input : ByteArray) (gas : Nat)
     (hfit : Challenge.Sha256.CalldataFits input)
