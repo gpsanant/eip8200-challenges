@@ -69,9 +69,14 @@ if [[ "${BENCHMARK_LAKE_CACHE_RESTORED:-}" != 1 ]]; then
   lake exe cache get
 fi
 
-# Compile the protected target and scorer before Comparator sees any editable
-# Lean source. `Main.lean` deliberately imports only trusted scoring modules.
-lake build Challenge.Sha256.Benchmark.Target sha256challenge
+# Compile all trusted inputs before Comparator sees any editable Lean source.
+# Caching `ReferenceCorrect` avoids re-elaborating the 3,000-module baseline
+# proof for every submission; Comparator still independently replays whatever
+# proof the submitted `candidate` theorem actually depends on.
+lake build \
+  Challenge.Sha256.Benchmark.Target \
+  Challenge.Sha256.Reference.Proofs.Bytecode.ReferenceCorrect \
+  sha256challenge
 mkdir -p "${tools_dir}/trusted"
 install -m 0755 "${built_scorer_bin}" "${trusted_scorer_bin}"
 

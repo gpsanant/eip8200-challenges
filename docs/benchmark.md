@@ -41,6 +41,10 @@ trusted scorer outside Comparator's writable `.lake` tree. After Comparator
 succeeds, that protected scorer executes the protected artifact on all clean
 and dirty vectors. Only then does the wrapper write `score.json`.
 
+Setup also prebuilds the trusted reference proof before saving the Lake cache.
+This keeps candidate compilation small on normal runs; Comparator's independent
+kernel replay remains intentionally uncached.
+
 Comparator and its format-compatible `lean4export` are pinned in `setup.sh`.
 On Linux, candidate compilation runs under Landrun and the `systemd-run`
 address-family restriction used by Comparator. macOS supports a functional,
