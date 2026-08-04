@@ -48,6 +48,15 @@ lake build
 lake env lean Checks.lean
 ```
 
+## Yukon benchmark
+
+The SHA-256 challenge is also packaged as a lower-is-better Yukon benchmark.
+Solvers replace only `Challenge/Sha256/Submission/`; the evaluator uses Lean
+Comparator to verify the exact bytecode artifact and its universal correctness
+proof, then scores total gas over the existing 19-vector suite. See
+[`docs/benchmark.md`](docs/benchmark.md) for the benchmark contract and local
+commands.
+
 CI additionally checks each contributed candidate using the convention in its
 submission guide, freezes reference artifacts, runs challenge scorers, and
 verifies that deliberately fake proofs are rejected by the submission checker.

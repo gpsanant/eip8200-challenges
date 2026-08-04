@@ -1,1 +1,6 @@
 /.lake
+/.benchmark-tools
+/Challenge/Sha256/Benchmark/Challenge.lean
+/Challenge/Sha256/Benchmark/Artifact.lean
+/benchmark-results
+/score.json

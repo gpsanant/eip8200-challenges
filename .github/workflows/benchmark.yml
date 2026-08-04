@@ -1,0 +1,107 @@
+name: EIP-8200 SHA-256 Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: eip8200-sha256-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout dispatched commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.24.6
+          cache: false
+
+      - name: Fingerprint trusted benchmark source
+        id: trusted-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted_hash="$({
+            git ls-files \
+              | grep -v '^Challenge/Sha256/Submission/' \
+              | while IFS= read -r path; do sha256sum "${path}"; done
+          } | sha256sum | cut -d' ' -f1)"
+          echo "hash=${trusted_hash}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore trusted Lake cache
+        id: lake-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lake
+          key: eip8200-benchmark-lake-${{ runner.os }}-${{ runner.arch }}-${{ steps.trusted-source.outputs.hash }}
+
+      - name: Restore benchmark tools
+        id: benchmark-tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .benchmark-tools
+          key: eip8200-benchmark-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('setup.sh') }}
+
+      - name: Setup benchmark
+        run: ./setup.sh
+        env:
+          BENCHMARK_LAKE_CACHE_RESTORED: ${{ steps.lake-cache.outputs.cache-hit == 'true' && '1' || '0' }}
+          BENCHMARK_TOOLS_CACHE_RESTORED: ${{ steps.benchmark-tools-cache.outputs.cache-hit }}
+
+      # Cache only the state produced before any editable Lean module is built.
+      - name: Save trusted Lake cache
+        if: steps.lake-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lake
+          key: ${{ steps.lake-cache.outputs.cache-primary-key }}
+
+      - name: Save benchmark tools
+        if: steps.benchmark-tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .benchmark-tools
+          key: ${{ steps.benchmark-tools-cache.outputs.cache-primary-key }}
+
+      - name: Benchmark submission
+        run: ./benchmark.sh
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f benchmark-results/summary.md ]]; then
+            cat benchmark-results/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "## Benchmark failed — see the job log" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload score
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: benchmark-score
+          path: score.json
+          if-no-files-found: error
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: benchmark-diagnostics-${{ github.run_id }}
+          path: benchmark-results/
+          if-no-files-found: warn

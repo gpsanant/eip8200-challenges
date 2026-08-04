@@ -1,4 +1,6 @@
-import Challenge
+import Challenge.Sha256.Reference.Bytecode
+import Challenge.Sha256.Reference.Source
+import Challenge.Sha256.Scorer
 import YulParser.Compile
 set_option warningAsError true
 /-!
