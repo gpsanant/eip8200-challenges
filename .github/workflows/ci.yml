@@ -16,7 +16,7 @@ jobs:
   # compile and save three copies of it.
   shared-lean:
     name: Shared Lean proof infrastructure
-    runs-on: warp-ubuntu-2404-x64-32x
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       package-key: ${{ steps.cache-keys.outputs.package-key }}
@@ -89,7 +89,7 @@ jobs:
   challenge:
     name: ${{ matrix.name }} proofs, submissions, and gas
     needs: shared-lean
-    runs-on: warp-ubuntu-2404-x64-32x
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
