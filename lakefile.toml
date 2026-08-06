@@ -1,6 +1,7 @@
 name = "eip8200-challenges"
 version = "0.1.0"
 defaultTargets = ["Challenge"]
+moreLeanArgs = ["-j1"]
 
 # The verified Yul→EVM compiler. Submissions written in Yul are compiled by
 # *this* compiler, so a Yul-level proof lands on the bytecode with no

@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Challenge.Sha256.Benchmark.Challenge",
+  "solution_module": "Challenge.Sha256.Submission.Solution",
+  "theorem_names": ["Challenge.Sha256.Benchmark.candidate"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": false
+}

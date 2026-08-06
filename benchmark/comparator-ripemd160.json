@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Challenge.Ripemd160.Benchmark.Challenge",
+  "solution_module": "Challenge.Ripemd160.Submission.Solution",
+  "theorem_names": ["Challenge.Ripemd160.Benchmark.candidate"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": false
+}
