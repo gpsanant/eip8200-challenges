@@ -51,6 +51,12 @@ lake build
 lake env lean Checks.lean
 ```
 
+## Yukon benchmark
+
+The repository is also a schema-v2 Yukon challenge with independent `sha256`,
+`modexp`, and `ripemd160` tracks. See [`docs/benchmark.md`](docs/benchmark.md)
+for editable paths, scoring, proof verification, and local commands.
+
 CI additionally checks each contributed candidate using the convention in its
 submission guide, freezes reference artifacts, runs challenge scorers, and
 verifies that deliberately fake proofs are rejected by the submission checker.

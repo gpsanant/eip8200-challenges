@@ -16,7 +16,7 @@ jobs:
   # compile and save three copies of it.
   shared-lean:
     name: Shared Lean proof infrastructure
-    runs-on: warp-ubuntu-2404-x64-32x
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       package-key: ${{ steps.cache-keys.outputs.package-key }}
@@ -85,12 +85,12 @@ jobs:
           lake build +Checks.EvmProof
 
   # Each matrix entry has its own job and source-keyed project cache. A RIPEMD
-  # submission therefore neither rebuilds nor invalidates SHA-256 or MODEXP.
+  # submission therefore neither rebuilds nor invalidates the other tracks.
   challenge:
     name: ${{ matrix.name }} proofs, submissions, and gas
     needs: shared-lean
-    runs-on: warp-ubuntu-2404-x64-32x
-    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -143,21 +143,37 @@ jobs:
           key: ${{ needs.shared-lean.outputs.shared-key }}
           fail-on-cache-miss: true
 
-      - name: Cache ${{ matrix.name }} project build
-        uses: actions/cache@v5
+      - name: Restore ${{ matrix.name }} project checkpoint
+        id: track-cache
+        uses: actions/cache/restore@v5
         with:
           # These outputs form one Lake trace graph and must be restored as a
           # unit; caching only the root outputs forces native dependencies cold.
           path: |
             .lake/build
             .lake/packages/*/.lake/build/ir
-          key: project-${{ matrix.slug }}-v2-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-${{ hashFiles(format('Challenge/{0}.lean', matrix.directory), format('Challenge/{0}/**', matrix.directory), matrix.main, format('Checks/{0}.lean', matrix.directory)) }}
-          # The final prefix can bootstrap the split from a base-branch cache
-          # during migration; challenge-local caches always take precedence.
+          # Every run writes a fresh checkpoint. A retry restores the newest
+          # compatible prefix, so a killed cold build does not start over.
+          key: project-${{ matrix.slug }}-v3-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-${{ hashFiles(format('Challenge/{0}.lean', matrix.directory), format('Challenge/{0}/**', matrix.directory), matrix.main, format('Checks/{0}.lean', matrix.directory)) }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            project-${{ matrix.slug }}-v3-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-${{ hashFiles(format('Challenge/{0}.lean', matrix.directory), format('Challenge/{0}/**', matrix.directory), matrix.main, format('Checks/{0}.lean', matrix.directory)) }}-
+            project-${{ matrix.slug }}-v3-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-
             project-${{ matrix.slug }}-v2-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-
             project-${{ matrix.slug }}-v1-${{ runner.os }}-${{ runner.arch }}-
             project-lake-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json') }}-
+
+      - name: Restore compiler dependency checkpoint
+        id: compiler-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            .lake/packages/evm_semantics/.lake/build
+            .lake/packages/yul-semantics/.lake/build
+            .lake/packages/yul-evm-compiler/.lake/build
+          key: project-compiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
+          restore-keys: |
+            project-compiler-v1-${{ runner.os }}-${{ runner.arch }}-${{ needs.shared-lean.outputs.shared-key }}-
+            project-compiler-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Set up Lean
         uses: leanprover/lean-action@v1
@@ -168,8 +184,114 @@ jobs:
           lint: "false"
           use-github-cache: "false"
 
+      # MODEXP's compiler trampoline is the longest single proof phase. Save it
+      # before entering later proofs so a hard runner shutdown cannot discard
+      # a completed 30-minute elaboration.
+      - name: Build MODEXP entry trampoline
+        if: matrix.slug == 'modexp'
+        run: |
+          scripts/build-lean-serial.sh Challenge.Modexp.Reference.Proofs.Bytecode.MainTrampolinesHigh
+
+      - name: Save MODEXP entry checkpoint
+        if: always() && matrix.slug == 'modexp' && steps.track-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/build
+            .lake/packages/*/.lake/build/ir
+          key: ${{ steps.track-cache.outputs.cache-primary-key }}-entry
+
+      - name: Build MODEXP header checks
+        if: matrix.slug == 'modexp'
+        run: |
+          scripts/build-lean-serial.sh Challenge.Modexp.Reference.Proofs.Bytecode.MainHeaderCheck
+
+      - name: Save MODEXP header checkpoint
+        if: always() && matrix.slug == 'modexp' && steps.track-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/build
+            .lake/packages/*/.lake/build/ir
+          key: ${{ steps.track-cache.outputs.cache-primary-key }}-header
+
+      - name: Build MODEXP dispatcher prelude
+        if: matrix.slug == 'modexp'
+        run: |
+          scripts/build-lean-serial.sh Challenge.Modexp.Reference Challenge.Modexp.Reference.Proofs.Bytecode.Dispatch
+
+      - name: Save MODEXP dispatcher checkpoint
+        if: always() && matrix.slug == 'modexp' && steps.track-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/build
+            .lake/packages/*/.lake/build/ir
+          key: ${{ steps.track-cache.outputs.cache-primary-key }}-dispatcher
+
+      - name: Save MODEXP compiler dependency checkpoint
+        if: always() && matrix.slug == 'modexp' && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/packages/evm_semantics/.lake/build
+            .lake/packages/yul-semantics/.lake/build
+            .lake/packages/yul-evm-compiler/.lake/build
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
+
+      - name: Build MODEXP big dispatcher checks
+        if: matrix.slug == 'modexp'
+        run: |
+          scripts/build-lean-serial.sh Challenge.Modexp.Reference.Proofs.Bytecode.BigDispatchCheck
+
+      - name: Save MODEXP big-check checkpoint
+        if: always() && matrix.slug == 'modexp' && steps.track-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/build
+            .lake/packages/*/.lake/build/ir
+          key: ${{ steps.track-cache.outputs.cache-primary-key }}-big-check
+
+      - name: Build MODEXP big dispatcher tail and gas proof
+        if: matrix.slug == 'modexp'
+        run: |
+          scripts/build-lean-serial.sh Challenge.Modexp.Reference.Proofs.Bytecode.BigDispatch
+
+      - name: Save MODEXP big dispatcher checkpoint
+        if: always() && matrix.slug == 'modexp' && steps.track-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/build
+            .lake/packages/*/.lake/build/ir
+          key: ${{ steps.track-cache.outputs.cache-primary-key }}-big-dispatcher
+
       - name: Build ${{ matrix.name }} proofs and scorer
-        run: lake build ${{ matrix.target }}
+        run: |
+          scorer_module="${{ matrix.main }}"
+          scripts/build-lean-serial.sh "Challenge.${{ matrix.directory }}" \
+            "Checks.${{ matrix.directory }}" "${scorer_module%.lean}"
+          lake build "${{ matrix.executable }}"
+
+      - name: Save compiler dependency checkpoint
+        if: always() && matrix.slug != 'modexp' && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/packages/evm_semantics/.lake/build
+            .lake/packages/yul-semantics/.lake/build
+            .lake/packages/yul-evm-compiler/.lake/build
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
+
+      - name: Save ${{ matrix.name }} project checkpoint
+        if: always() && steps.track-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .lake/build
+            .lake/packages/*/.lake/build/ir
+          key: ${{ steps.track-cache.outputs.cache-primary-key }}-complete
 
       # A proof is only a proof if its axiom footprint is the standard one.
       # The textual scan catches an unfinished proof that an umbrella misses.

@@ -1,0 +1,7 @@
+{
+  "challenge_module": "Challenge.Modexp.Benchmark.Challenge",
+  "solution_module": "Challenge.Modexp.Submission.Solution",
+  "theorem_names": ["Challenge.Modexp.Benchmark.candidate"],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
+  "enable_nanoda": false
+}
